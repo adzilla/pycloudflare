@@ -181,10 +181,8 @@ class FakeService(object):
     def delete_zone(self, zone_id):
         del self.zones[zone_id]
 
-    def get_zone_settings(self, zone_id, page=1, per_page=50):
-        page -= 1  # Map to our 0-indexed list
-        settings = list(self.zones[zone_id]['_settings'].values())
-        return deepcopy(settings[page:page + per_page])
+    def get_zone_settings(self, zone_id):
+        return deepcopy(list(self.zones[zone_id]['_settings'].values()))
 
     def set_zone_settings(self, zone_id, items):
         for setting in items:
@@ -252,5 +250,5 @@ class FakeService(object):
     def update_page_rule(self, zone_id, page_rule_id, data):
         return self._update_object('_page_rules', zone_id, page_rule_id, data)
 
-    def purge_cache(self, zone_id, files=None, tags=None):
+    def purge_cache(self, zone_id, files=None, tags=None, hosts=None):
         return

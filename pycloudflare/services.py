@@ -5,6 +5,7 @@ from demands.pagination import (
 from six.moves.urllib.parse import urlencode
 
 from pycloudflare.config import get_config
+from pycloudflare.exceptions import AccountNotFound, CustomHostnameNotFound
 
 
 class ZoneNotFound(Exception):
@@ -16,6 +17,7 @@ CF_PAGINATION_OPTIONS = {
     PAGE_SIZE: 50,
     RESULTS_KEY: None,
 }
+_ADMINSTRATOR_ROLE_ID = '05784afa30c1afe1440e79d9351c7430'
 
 
 def cloudflare_paginated_results(fn, args=(), kwargs=None):
@@ -24,6 +26,7 @@ def cloudflare_paginated_results(fn, args=(), kwargs=None):
 
 
 class CloudFlareService(HTTPServiceClient):
+
     def __init__(self, api_key, email):
         headers = {
             'X-Auth-Key': api_key,
@@ -44,6 +47,35 @@ class CloudFlareService(HTTPServiceClient):
         }
         return self.get(base_url + '?' + urlencode(params))
 
+    def create_account(self, name, account_type='standard'):
+        return self.post('accounts', json={
+            'name': name,
+            'type': account_type
+        })
+
+    def get_account_by_name(self, name):
+        result = self.get('accounts', params={'name': name})
+        assert len(result) <= 1
+        if not result:
+            raise AccountNotFound()
+
+        return result[0]
+
+    def add_account_member(
+            self, account_id, email, role=_ADMINSTRATOR_ROLE_ID):
+        return self.post('accounts/{}/members'.format(account_id), json={
+            'email': email,
+            'roles': [role]
+        })
+
+    def list_account_members(self, account_id, page=1, per_page=20):
+        return self._get_paginated(
+            'accounts/{}/members'.format(account_id), page, per_page)
+
+    def delete_account_member(self, account_id, member_id):
+        return self.delete(
+            'accounts/{}/members/{}'.format(account_id, member_id))
+
     def get_zones(self, page=1, per_page=CF_PAGINATION_OPTIONS[PAGE_SIZE]):
         return self._get_paginated('zones', page, per_page)
 
@@ -58,10 +90,8 @@ class CloudFlareService(HTTPServiceClient):
 
         return result[0]
 
-    def get_zone_settings(self, zone_id, page=1,
-                          per_page=CF_PAGINATION_OPTIONS[PAGE_SIZE]):
-        url = 'zones/%s/settings' % zone_id
-        return self._get_paginated(url, page, per_page)
+    def get_zone_settings(self, zone_id):
+        return self.get('zones/%s/settings' % zone_id)
 
     def set_zone_settings(self, zone_id, items):
         data = {'items': items}
@@ -74,14 +104,11 @@ class CloudFlareService(HTTPServiceClient):
         url = 'zones/%s/settings/%s' % (zone_id, setting)
         return self.patch(url, json={'value': value})
 
-    def create_zone(self, name, jump_start=False, organization=None):
-        data = {
+    def create_zone(self, name, account_id):
+        return self.post('zones', json={
             'name': name,
-            'jump_start': jump_start,
-        }
-        if organization:
-            data['organization'] = {'id': organization}
-        return self.post('zones', json=data)
+            'account': {'id': account_id}
+        })
 
     def delete_zone(self, zone_id):
         return self.delete('zones/%s' % zone_id)
@@ -122,14 +149,18 @@ class CloudFlareService(HTTPServiceClient):
     def delete_page_rule(self, zone_id, rule_id):
         return self.delete('zones/%s/pagerules/%s' % (zone_id, rule_id))
 
-    def purge_cache(self, zone_id, files=None, tags=None):
+    def purge_cache(self, zone_id, files=None, tags=None, hosts=None):
         data = {}
         if files:
             data['files'] = files
         if tags:
             data['tags'] = tags
-        if files is None and tags is None:
+        if hosts:
+            data['hosts'] = hosts
+
+        if not data:
             data['purge_everything'] = True
+
         return self.delete('zones/%s/purge_cache' % zone_id, json=data)
 
     def get_ssl_universal_settings(self, zone_id):
@@ -141,6 +172,37 @@ class CloudFlareService(HTTPServiceClient):
 
     def get_ssl_verification_info(self, zone_id):
         return self.get('zones/%s/ssl/verification' % zone_id)
+
+    def create_custom_hostname(self, zone_id, hostname, ssl_settings):
+        data = {
+            'hostname': hostname,
+            'ssl': ssl_settings
+        }
+        return self.post(
+            'zones/{}/custom_hostnames'.format(zone_id), json=data)
+
+    def get_custom_hostname_by_name(self, zone_id, hostname):
+        result = self.get(
+            'zones/{}/custom_hostnames'.format(zone_id),
+            params={'hostname': hostname})
+
+        if not result:
+            raise CustomHostnameNotFound()
+
+        return result[0]
+
+    def update_custom_hostname(self, zone_id, hostname_id, **data):
+        return self.patch(
+            'zones/{}/custom_hostnames/{}'.format(zone_id, hostname_id),
+            json=data)
+
+    def delete_custom_hostname_by_name(self, zone_id, hostname):
+        hostname_id = self.get_custom_hostname_by_name(zone_id, hostname)['id']
+        return self.delete_custom_hostname(zone_id, hostname_id)
+
+    def delete_custom_hostname(self, zone_id, hostname_id):
+        return self.delete(
+            'zones/{}/custom_hostnames/{}'.format(zone_id, hostname_id))
 
 
 CF_HOST_PAGINATION_OPTIONS = {
